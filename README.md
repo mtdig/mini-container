@@ -184,8 +184,8 @@ We need to add:
 1. Add CLONE_NEWUSER to the clone flags
 After clone, write uid/gid mappings from the parent:
 
-/proc/<child_pid>/uid_map  →  "0 1000 1"   (container root = host uid 1000)
-/proc/<child_pid>/gid_map  →  "0 1000 1"
+/proc/<child_pid>/uid_map  ->  "0 1000 1"   (container root = host uid 1000)
+/proc/<child_pid>/gid_map  ->  "0 1000 1"
 
 2. Write "deny" to /proc/<child_pid>/setgroups first (kernel requirement)
 
