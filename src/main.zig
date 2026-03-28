@@ -4,8 +4,8 @@
 // /proc + /dev mounting — the same primitives Docker/runc use.
 //
 // Build & run:
-//   zig build-exe -OReleaseSafe container.zig
-//   sudo ./container ./rootfs 67108864 /bin/sh
+//   zig build -Doptimize=ReleaseSmall --summary all
+//   sudo zig-out/bin/container ./rootfs 67108864 /bin/sh
 //
 // Requires: Linux kernel >= 5.3, cgroups v2 mounted at /sys/fs/cgroup
 

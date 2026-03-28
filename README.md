@@ -2,6 +2,8 @@
 
 - [Anatomy of a Linux Container Runtime](#anatomy-of-a-linux-container-runtime)
   - [Introduction](#introduction)
+    - [how?](#how)
+    - [why zig?](#why-zig)
   - [pivot\_root vs chroot](#pivot_root-vs-chroot)
   - [container runtime sequence](#container-runtime-sequence)
   - [rootfs](#rootfs)
@@ -15,15 +17,38 @@
 
 ## Introduction
 
-Recent lab exercises @hogent triggered my curiosity.  I know containers run isolated, but differenty than by virtualizing hardware.  They share resources with the host and are more lightweight than virtual machines.  The filesystem of a container is layered with overlayfs, at least docker.  That's pretty much it.
+### how?
 
-In the process, I discovered Talos for Kubernetes.  That's for another time.
+Recent lab exercises @hogent triggered my curiosity.  I know containers run isolated, but differenty than by virtualizing hardware.  They share resources with the host and are more lightweight than virtual machines.  The filesystem of a container is layered with overlayfs, at least for Docker (OverlayFS / overlayfs2).  That's pretty much it.
 
-I quickly understood that it's a matter of a handful of kernel features: cgroups, namespaces, unshare, ...
+I quickly understood that it's a matter of a handful of kernel features: cgroups, namespaces, unshare, pivot_chroot, ...
 
 - cgroups ([linux control groups](https://man7.org/linux/man-pages/man7/cgroups.7.html)): handling resources and limits
 - namespaces ([linux namespaces](https://man7.org/linux/man-pages/man7/namespaces.7.html)) with CLONE flags: this manage the isolation
 - pivot_root ([change the root filesystem](https://man7.org/linux/man-pages/man8/pivot_root.8.html)): swap container's root filesystem
+- unshare ([run program in new namespaces](https://man7.org/linux/man-pages/man1/unshare.1.html))
+
+_a naive example_
+
+```bash
+$ nix-shell -p util-linux --run "sudo unshare --fork --pid --mount-proc bash"
+warning: $HOME ('/home/jeroen') is not owned by you, falling back to the one defined in the 'passwd' file ('/root')
+warning: Nix search path entry '/nix/var/nix/profiles/per-user/root/channels' does not exist, ignoring
+
+[root@nixos:/home/jeroen/projects/mini-container]# ps aux
+USER         PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
+root           1  0.0  0.0   9328  5600 pts/10   S    20:13   0:00 bash
+root           5  0.0  0.0  10496  3984 pts/10   R+   20:16   0:00 ps aux
+
+[root@nixos:/home/jeroen/projects/mini-container]#
+```
+
+In the process, I also discovered Talos for Kubernetes.  That's for another time.
+
+### why zig?
+
+I discovered zig at v0.11.  Early stages, immature, but functional and very promising.  Fairly easy to get started.  Actually, I started a refresh-project of the cool xymon monitoring tool.  After a few months however, I abandonned it because of breaking changes, moving target.
+Now, we're at v0.15.2 and nearing the first production release.  So I wanted to give it another go.  I'm using claude.ai to give me a hand with picking it back up and even though it struggles with zig because of its small user base and available zig projects, it's better than a few years ago.
 
 
 ## pivot_root vs chroot
