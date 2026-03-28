@@ -168,6 +168,12 @@ $
 
 
 ## TODO
+
+- [ ] overlay2
+- [ ] rootless
+- [ ] ...
+
+
 ### rootless (WIP)
 
 Almost everything the container does requires root (CAP_SYS_ADMIN):
