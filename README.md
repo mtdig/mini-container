@@ -103,7 +103,7 @@ install success
 run
 
 ```bash
-$ sudo zig-out/bin/container -- ./rootfs 67108864 /bin/sh
+$ sudo zig-out/bin/container ./rootfs 134217728 /bin/sh
 ```
 
 
