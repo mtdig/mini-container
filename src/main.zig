@@ -125,7 +125,7 @@ pub fn main() !void {
     const rc = linux.syscall5(
         .clone,
         @as(usize, @intCast(clone_flags)),
-        0, // child_stack = 0 → fork-like (share parent stack copy)
+        0, // child_stack = 0 -> fork-like (share parent stack copy)
         0, // parent_tid
         0, // child_tid
         0, // tls
@@ -171,7 +171,7 @@ pub fn main() !void {
             break;
         }
 
-        // WIFEXITED: low 7 bits are zero
+        // WIFEXITED: low 7 bits are zero, check `man 2 waitpid` for details
         if (status & 0x7f == 0) {
             const code: u8 = @truncate(status >> 8);
             std.debug.print("[parent] child exited with status {d}\n", .{code});
