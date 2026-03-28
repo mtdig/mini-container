@@ -52,9 +52,9 @@ Now, we're at v0.15.2 and nearing the first production release.  So I wanted to 
 
 
 ## pivot_root vs chroot
-`chroot` only changes the process's path resolution root. The kernel just says "when this process resolves /, start from this directory instead." But the process's actual mount namespace is untouched — the old root filesystem is still fully mounted and accessible. A privileged process can escape by using `fchdir` on a file descriptor opened before the chroot, or by creating a new mount namespace, or even by doing a second chroot with relative paths. It was never designed as a security boundary — it was designed for system recovery and building packages.  And this is what we use when we install linux too.
+`chroot` only changes the process's path resolution root. The kernel just says "when this process resolves /, start from this directory instead." But the process's actual mount namespace is untouched -- the old root filesystem is still fully mounted and accessible. A privileged process can escape by using `fchdir` on a file descriptor opened before the chroot, or by creating a new mount namespace, or even by doing a second chroot with relative paths. It was never designed as a security boundary -- it was designed for system recovery and building packages.  And this is what we use when we install linux too.
 
-`pivot_root` actually changes which mount is at the root of the mount namespace. It swaps the current root mount with a new one and moves the old root to a specified mountpoint. After that, you can (and should) unmount the old root entirely. Once it's unmounted, there's nothing to escape back to — the old filesystem is simply gone from the namespace. This is why container runtimes use it.
+`pivot_root` actually changes which mount is at the root of the mount namespace. It swaps the current root mount with a new one and moves the old root to a specified mountpoint. After that, you can (and should) unmount the old root entirely. Once it's unmounted, there's nothing to escape back to -- the old filesystem is simply gone from the namespace. This is why container runtimes use it.
 
 `chroot` is cosmetic where `pivot_root` is structural
 
@@ -172,12 +172,12 @@ $
 
 Almost everything the container does requires root (CAP_SYS_ADMIN):
 
-clone() with CLONE_NEWPID, CLONE_NEWNS, CLONE_NEWNET, CLONE_NEWIPC — all need root
-mount(), pivot_root() — need root
-mknod() for /dev/null etc. — needs root
-Writing to /sys/fs/cgroup — needs root
+- clone() with CLONE_NEWPID, CLONE_NEWNS, CLONE_NEWNET, CLONE_NEWIPC -- all need root
+- mount(), pivot_root() -- need root
+- mknod() for /dev/null etc. -- needs root
+- Writing to /sys/fs/cgroup -- needs root
 
-The escape hatch is CLONE_NEWUSER. This is how rootless Podman and rootless Docker work. A user namespace lets an unprivileged UID become UID 0 inside the container. Once it's "root" inside a user namespace, the kernel grants it capabilities for the other namespace operations (mount, pivot_root, etc.) — but only within that namespace. It can't actually touch host resources.
+The escape hatch is CLONE_NEWUSER. This is how rootless Podman and rootless Docker work. A user namespace lets an unprivileged UID become UID 0 inside the container. Once it's "root" inside a user namespace, the kernel grants it capabilities for the other namespace operations (mount, pivot_root, etc.) -- but only within that namespace. It can't actually touch host resources.
 
 We need to add:
 
@@ -189,7 +189,7 @@ After clone, write uid/gid mappings from the parent:
 
 2. Write "deny" to /proc/<child_pid>/setgroups first (kernel requirement)
 
-The tricky part is synchronization — the child has to wait until the parent has written the mappings before it calls mount() or pivot_root(). We'd typically use a pipe: child blocks on read(), parent writes the mappings then closes the pipe, child proceeds.
+The tricky part is synchronization -- the child has to wait until the parent has written the mappings before it calls mount() or pivot_root(). We'd typically use a pipe: child blocks on read(), parent writes the mappings then closes the pipe, child proceeds.
 
 To be continued ...
 
