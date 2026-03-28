@@ -76,7 +76,14 @@ pub fn main() !void {
     // After clone()+pivot_root, the Zig stdlib/allocator may not
     // work (debug info reads /proc/self/exe, etc). Prepare everything now.
     const argv_z = try allocator.alloc(?[*:0]const u8, cmd_args.len + 1);
-    defer allocator.free(argv_z);
+    defer {
+        for (argv_z[0..cmd_args.len]) |maybe_ptr| {
+            if (maybe_ptr) |ptr| {
+                allocator.free(std.mem.span(ptr));
+            }
+        }
+        allocator.free(argv_z);
+    }
     for (cmd_args, 0..) |arg, i| {
         argv_z[i] = (try allocator.dupeZ(u8, arg)).ptr;
     }
@@ -86,6 +93,15 @@ pub fn main() !void {
         "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "TERM=xterm-256color",
         "HOME=/root",
+    };
+
+    // Move the parent into the sub-cgroup BEFORE clone, so that
+    // CLONE_NEWCGROUP roots the child's cgroup namespace at our
+    // sub-cgroup. This way the child sees its own cgroup as /,
+    // and memory.max / memory.current reflect the correct limits.
+    joinCgroupPid(cgroup_path, linux.getpid()) catch |err| {
+        std.debug.print("container: failed to join cgroup: {}\n", .{err});
+        std.process.exit(1);
     };
 
     // clone into new namespaces
@@ -101,6 +117,7 @@ pub fn main() !void {
         linux.CLONE.NEWUTS |
         // linux.CLONE.NEWNET | -- if we don't create a new network, we share the host network, like what `docker run --network=host` does
         linux.CLONE.NEWIPC |
+        linux.CLONE.NEWCGROUP | // container sees its own cgroup as /
         linux.SIG.CHLD;
 
     const rc = linux.syscall5(
@@ -123,9 +140,14 @@ pub fn main() !void {
     if (child_pid == 0) {
         // child process
         // only use raw syscalls from here — no allocator, no stdlib.
-        childMain(abs_rootfs, cgroup_path, @ptrCast(argv_z.ptr), @ptrCast(&env));
+        childMain(abs_rootfs, @ptrCast(argv_z.ptr), @ptrCast(&env));
     } else {
-        //  parent process
+        // parent process — move ourselves back to the root cgroup
+        // so only the child (and its descendants) remain constrained.
+        moveToRootCgroup() catch |err| {
+            std.debug.print("container: failed to move parent back to root cgroup: {}\n", .{err});
+        };
+
         std.debug.print("[parent] child PID in host namespace: {d}\n", .{child_pid});
 
         // wait for the child using raw syscall
@@ -166,11 +188,10 @@ pub fn main() !void {
 
 fn childMain(
     rootfs: []const u8,
-    cgroup_path: []const u8,
     argv: [*:null]const ?[*:0]const u8,
     envp: [*:null]const ?[*:0]const u8,
 ) noreturn {
-    childMainInner(rootfs, cgroup_path, argv, envp) catch {};
+    childMainInner(rootfs, argv, envp) catch {};
     // if we get here, exec failed — exit via raw syscall
     _ = linux.syscall1(.exit_group, 1);
     unreachable;
@@ -178,15 +199,11 @@ fn childMain(
 
 fn childMainInner(
     rootfs: []const u8,
-    cgroup_path: []const u8,
     argv: [*:null]const ?[*:0]const u8,
     envp: [*:null]const ?[*:0]const u8,
 ) !void {
     // use raw write() for logging — std.debug.print may access /proc
     writeLog("[child]  setting up container\n");
-
-    // join the cgroup
-    try joinCgroup(cgroup_path);
 
     // set hostname
     const hostname = "container";
@@ -300,9 +317,15 @@ fn setupMounts(rootfs: []const u8) !void {
     sysMkdir("/sys", 0o555);
     _ = sysMount("sysfs", "/sys", "sysfs", linux.MS.RDONLY, 0) catch {};
 
-    // mount /tmp
+    // Mount cgroup2 so memory.max/memory.current are visible inside the container.
+    // Must come after sysfs, otherwise /sys gets mounted over our cgroup2 mount.
+    sysMkdir("/sys/fs/cgroup", 0o555);
+    _ = sysMount("cgroup2", "/sys/fs/cgroup", "cgroup2", linux.MS.RDONLY, 0) catch {};
+
+    // mount /tmp — no explicit size limit so it can grow until the
+    // cgroup memory limit kicks in and the OOM killer fires.
     sysMkdir("/tmp", 0o1777);
-    _ = sysMountData("tmpfs", "/tmp", "tmpfs", 0, "size=65536k") catch {};
+    _ = sysMount("tmpfs", "/tmp", "tmpfs", 0, 0) catch {};
 
     std.debug.print("[child]  mounts set up, pivoted into new rootfs\n", .{});
 }
@@ -345,15 +368,22 @@ fn setupCgroup(buf: []u8, mem_limit: u64) ![]const u8 {
     return cgroup_dir;
 }
 
-fn joinCgroup(cgroup_path: []const u8) !void {
+fn joinCgroupPid(cgroup_path: []const u8, pid: anytype) !void {
     var path_buf: [512]u8 = undefined;
     const procs_path = fmt.bufPrint(&path_buf, "{s}/cgroup.procs", .{cgroup_path}) catch
         return error.PathTooLong;
 
     var pid_buf: [16]u8 = undefined;
-    const pid_str = fmt.bufPrint(&pid_buf, "{d}", .{linux.getpid()}) catch unreachable;
+    const pid_str = fmt.bufPrint(&pid_buf, "{d}", .{pid}) catch unreachable;
 
     try writeToFile(procs_path, pid_str);
+}
+
+/// Move the calling process back to the root cgroup.
+fn moveToRootCgroup() !void {
+    var pid_buf: [16]u8 = undefined;
+    const pid_str = fmt.bufPrint(&pid_buf, "{d}", .{linux.getpid()}) catch unreachable;
+    try writeToFile(cgroup_root ++ "/cgroup.procs", pid_str);
 }
 
 fn cleanupCgroup(cgroup_path: []const u8) void {
@@ -430,9 +460,9 @@ fn printBanner(rootfs: []const u8, mem_limit: u64, cmd: []const u8) void {
         \\╔══════════════════════════════════════════╗
         \\║        mini-container starting...        ║
         \\╠══════════════════════════════════════════╣
-        \\║  rootfs:    {s:28}║
+        \\║  rootfs:    {s:28} ║
         \\║  mem limit: {d:10} bytes║
-        \\║  command:   {s:28}║
+        \\║  command:   {s:28} ║
         \\╚══════════════════════════════════════════╝
         \\
     , .{ rootfs, mem_limit, cmd });

@@ -1,23 +1,49 @@
-# Anatomy of a Contianer Runtime
+# Anatomy of a Linux Container Runtime
 
-- [Anatomy of a Contianer Runtime](#anatomy-of-a-contianer-runtime)
+- [Anatomy of a Linux Container Runtime](#anatomy-of-a-linux-container-runtime)
   - [Introduction](#introduction)
+  - [pivot\_root vs chroot](#pivot_root-vs-chroot)
+  - [container runtime sequence](#container-runtime-sequence)
   - [rootfs](#rootfs)
     - [Download Alpine minirootfs](#download-alpine-minirootfs)
   - [Build \& Run](#build--run)
+  - [TEST cgroups limits](#test-cgroups-limits)
+  - [TODO](#todo)
+    - [rootless (WIP)](#rootless-wip)
   - [Sources](#sources)
 
 
 ## Introduction
 
-Recent lab exercises @hogent triggered my curiosity.  I know containers run isolated.  They share resources with the host and are more lightweight than virtual machines.  The filesystem of a container is layered with overlayfs, at least docker.
+Recent lab exercises @hogent triggered my curiosity.  I know containers run isolated, but differenty than by virtualizing hardware.  They share resources with the host and are more lightweight than virtual machines.  The filesystem of a container is layered with overlayfs, at least docker.  That's pretty much it.
 
 In the process, I discovered Talos for Kubernetes.  That's for another time.
 
 I quickly understood that it's a matter of a handful of kernel features: cgroups, namespaces, unshare, ...
 
+- cgroups ([linux control groups](https://man7.org/linux/man-pages/man7/cgroups.7.html)): handling resources and limits
+- namespaces ([linux namespaces](https://man7.org/linux/man-pages/man7/namespaces.7.html)) with CLONE flags: this manage the isolation
+- pivot_root ([change the root filesystem](https://man7.org/linux/man-pages/man8/pivot_root.8.html)): swap container's root filesystem
 
 
+## pivot_root vs chroot
+`chroot` only changes the process's path resolution root. The kernel just says "when this process resolves /, start from this directory instead." But the process's actual mount namespace is untouched — the old root filesystem is still fully mounted and accessible. A privileged process can escape by using `fchdir` on a file descriptor opened before the chroot, or by creating a new mount namespace, or even by doing a second chroot with relative paths. It was never designed as a security boundary — it was designed for system recovery and building packages.  And this is what we use when we install linux too.
+
+`pivot_root` actually changes which mount is at the root of the mount namespace. It swaps the current root mount with a new one and moves the old root to a specified mountpoint. After that, you can (and should) unmount the old root entirely. Once it's unmounted, there's nothing to escape back to — the old filesystem is simply gone from the namespace. This is why container runtimes use it.
+
+`chroot` is cosmetic where `pivot_root` is structural
+
+## container runtime sequence
+
+The typical sequence a container runtime follows looks roughly like this:
+
+1. Set up the overlayfs (stack the image layers, add writable upper layer)
+2. clone() with the desired CLONE_NEW* flags to create an isolated child process
+3. In the child: set up cgroup limits (or the parent does this before exec)
+4. Mount /proc, /sys, /dev inside the new rootfs
+5. pivot_root to the new rootfs, unmount the old root
+6. Drop capabilities, set seccomp filters for syscall filtering
+7. exec the container's entrypoint
 
 
 ## rootfs
@@ -37,9 +63,81 @@ echo "nameserver 8.8.8.8" | sudo tee rootfs/etc/resolv.conf
 
 ## Build & Run
 
-sudo zig build run -- ./rootfs 67108864 /bin/sh
+build
+
+```bash
+$ zig build
+```
+
+runb
+
+```bash
+$ sudo zig-out/bin/container -- ./rootfs 67108864 /bin/sh
+```
 
 
+## TEST cgroups limits
+
+Run the container with 128MiB and write 50MiB blocks to tmpfs (in-memory).  We expect it to OOM at the 3rd block.
+
+
+```bash
+sudo zig-out/bin/container ./rootfs 134217728 /bin/sh
+╔══════════════════════════════════════════╗
+║        mini-container starting...        ║
+╠══════════════════════════════════════════╣
+║  rootfs:                        ./rootfs ║
+║  mem limit:  134217728 bytes║
+║  command:                        /bin/sh ║
+╚══════════════════════════════════════════╝
+[parent] cgroup: /sys/fs/cgroup/mini-container-184769 (mem limit 134217728 bytes)
+[child]  setting up container
+[parent] child PID in host namespace: 184770
+[child]  mounts set up, pivoted into new rootfs
+[child]  executing command
+/ # while true; do cat /sys/fs/cgroup/memory.current; head -c 52428800 /dev/zero | cat >> /tmp/balloon; sleep 0.2; done
+75874304
+95780864
+Killed
+100433920
+Killed
+133398528
+[parent] child terminated abnormally
+```
+
+```bash
+$ dmesg | tail -n 2
+[38505.055786] oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null),cpuset=mini-container-184255,mems_allowed=0,oom_memcg=/mini-container-184255,task_memcg=/mini-container-184255,task=sh,pid=184256,uid=0
+[38505.055794] Memory cgroup out of memory: Killed process 184256 (sh) total-vm:155376kB, anon-rss:3504kB, file-rss:3216kB, shmem-rss:0kB, UID:0 pgtables:112kB oom_score_adj:0
+$
+```
+
+
+## TODO
+### rootless (WIP)
+
+Almost everything the container does requires root (CAP_SYS_ADMIN):
+
+clone() with CLONE_NEWPID, CLONE_NEWNS, CLONE_NEWNET, CLONE_NEWIPC — all need root
+mount(), pivot_root() — need root
+mknod() for /dev/null etc. — needs root
+Writing to /sys/fs/cgroup — needs root
+
+The escape hatch is CLONE_NEWUSER. This is how rootless Podman and rootless Docker work. A user namespace lets an unprivileged UID become UID 0 inside the container. Once it's "root" inside a user namespace, the kernel grants it capabilities for the other namespace operations (mount, pivot_root, etc.) — but only within that namespace. It can't actually touch host resources.
+
+We need to add:
+
+1. Add CLONE_NEWUSER to the clone flags
+After clone, write uid/gid mappings from the parent:
+
+/proc/<child_pid>/uid_map  →  "0 1000 1"   (container root = host uid 1000)
+/proc/<child_pid>/gid_map  →  "0 1000 1"
+
+2. Write "deny" to /proc/<child_pid>/setgroups first (kernel requirement)
+
+The tricky part is synchronization — the child has to wait until the parent has written the mappings before it calls mount() or pivot_root(). We'd typically use a pipe: child blocks on read(), parent writes the mappings then closes the pipe, child proceeds.
+
+To be continued ...
 
 ## Sources
 
