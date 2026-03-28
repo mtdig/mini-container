@@ -75,6 +75,7 @@ pub fn main() !void {
     // build null-terminated argv/env BEFORE clone
     // After clone()+pivot_root, the Zig stdlib/allocator may not
     // work (debug info reads /proc/self/exe, etc). Prepare everything now.
+    // [*:0]const u8 is a null-terminated string slice, a C-style char* string, which is what syscalls expect.
     const argv_z = try allocator.alloc(?[*:0]const u8, cmd_args.len + 1);
     defer {
         for (argv_z[0..cmd_args.len]) |maybe_ptr| {
