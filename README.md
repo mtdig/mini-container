@@ -1,6 +1,6 @@
-# Anatomy of a Linux Container Runtime
+# Anatomy of a Naive Linux Container Runtime
 
-- [Anatomy of a Linux Container Runtime](#anatomy-of-a-linux-container-runtime)
+- [Anatomy of a Naive Linux Container Runtime](#anatomy-of-a-naive-linux-container-runtime)
   - [Introduction](#introduction)
     - [how?](#how)
     - [why zig?](#why-zig)
