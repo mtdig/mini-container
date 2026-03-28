@@ -136,7 +136,7 @@ Run the container with 128MiB and write 50MiB blocks to tmpfs (in-memory).  We e
 
 
 ```bash
-sudo zig-out/bin/container ./rootfs 134217728 /bin/sh
+$ sudo zig-out/bin/container ./rootfs 134217728 /bin/sh
 ╔══════════════════════════════════════════╗
 ║        mini-container starting...        ║
 ╠══════════════════════════════════════════╣
