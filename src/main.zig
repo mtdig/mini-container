@@ -93,6 +93,7 @@ pub fn main() !void {
         "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "TERM=xterm-256color",
         "HOME=/root",
+        "LANG=C.UTF-8",
     };
 
     // Move the parent into the sub-cgroup BEFORE clone, so that
