@@ -28,7 +28,7 @@ I quickly understood that it's a matter of a handful of kernel features: cgroups
 - pivot_root ([change the root filesystem](https://man7.org/linux/man-pages/man8/pivot_root.8.html)): swap container's root filesystem
 - unshare ([run program in new namespaces](https://man7.org/linux/man-pages/man1/unshare.1.html))
 
-_a naive example_
+_a naive example_ (with only new pid and /proc remount, no separate rootfs)
 
 ```bash
 $ nix-shell -p util-linux --run "sudo unshare --fork --pid --mount-proc bash"
@@ -75,6 +75,20 @@ The typical sequence a container runtime follows looks roughly like this:
 
 ### Download Alpine minirootfs
 
+We want a separate and new filesystem, isolated from the host filesystem.  Alpine is know for its minimal size.
+
+```bash
+curl -fSL -o alpine-minirootfs.tar.gz \
+  https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/aarch64/alpine-minirootfs-3.21.3-aarch64.tar.gz
+
+mkdir -p rootfs
+sudo tar -xzf alpine-minirootfs.tar.gz -C rootfs
+echo "nameserver 8.8.8.8" | sudo tee rootfs/etc/resolv.conf
+```
+
+for x86_64
+My NixOS has binfmt_misc configured with QEMU user-mode emulation. When the kernel sees an x86_64 ELF binary, it transparently invokes qemu-x86_64 to translate the instructions at runtime.
+
 ```bash
 curl -fSL -o alpine-minirootfs.tar.gz \
   https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/x86_64/alpine-minirootfs-3.21.3-x86_64.tar.gz
@@ -100,11 +114,20 @@ install success
 
 ```
 
+
 run
 
 ```bash
 $ sudo zig-out/bin/container ./rootfs 134217728 /bin/sh
 ```
+
+aarch64 / arm64
+
+<img src="img/alpine-container-aarch64.png" width="1000" alt="install apk"> 
+
+x86_64
+
+<img src="img/alpine-container.png" width="1000" alt="install apk"> 
 
 
 ## TEST cgroups limits
