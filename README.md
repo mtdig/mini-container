@@ -91,10 +91,16 @@ echo "nameserver 8.8.8.8" | sudo tee rootfs/etc/resolv.conf
 build
 
 ```bash
-$ zig build
+$ zig build -Doptimize=ReleaseSmall --summary all
+
+Build Summary: 3/3 steps succeeded
+install success
+└─ install container success
+   └─ compile exe container ReleaseSmall native success 417ms MaxRSS:129M
+
 ```
 
-runb
+run
 
 ```bash
 $ sudo zig-out/bin/container -- ./rootfs 67108864 /bin/sh
