@@ -57,15 +57,58 @@ In the process, I also discovered Talos for Kubernetes.  That's for another time
 
 The typical sequence a container runtime follows looks roughly like this:
 
-1. Set up the overlayfs (stack the image layers, add writable upper layer)
+1. Set up the overlayfs (stack the image layers, add writable upper layer) - *not implemented here, we use a [plain rootfs directory](#rootfs)*
+
 2. Create a cgroup and set resource limits (memory, CPU, ...)
+   ```zig
+   const cgroup_path = try setupCgroup(&cgroup_buf, mem_limit);
+   ```
+   -> [`setupCgroup()`](src/main.zig#L349) creates `/sys/fs/cgroup/mini-container-<pid>`, writes `memory.max` and `memory.swap.max`
+
 3. Move the parent into the sub-cgroup so CLONE_NEWCGROUP roots correctly
-4. clone() with CLONE_NEWPID | CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWCGROUP | ...
+   ```zig
+   joinCgroupPid(cgroup_path, linux.getpid());
+   ```
+   -> [`joinCgroupPid()`](src/main.zig#L389) writes our PID to `cgroup.procs`. This ensures the child inherits the correct cgroup namespace root at clone time.
+
+4. `clone()` with CLONE_NEWPID | CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWCGROUP
+   ```zig
+   const clone_flags: u64 = linux.CLONE.NEWPID |
+       linux.CLONE.NEWNS | linux.CLONE.NEWUTS |
+       linux.CLONE.NEWIPC | linux.CLONE.NEWCGROUP | linux.SIG.CHLD;
+   const rc = linux.syscall5(.clone, @as(usize, @intCast(clone_flags)), 0, 0, 0, 0);
+   ```
+   -> [lines 115–131](src/main.zig#L115-L131). Without `CLONE_VM`, clone acts like `fork()` - the child gets a copy of the address space.
+
 5. Parent moves itself back to root cgroup (only child stays constrained)
+   ```zig
+   moveToRootCgroup();
+   ```
+   -> [`moveToRootCgroup()`](src/main.zig#L398) writes the parent PID to `/sys/fs/cgroup/cgroup.procs`
+
 6. In the child: mount /proc, /sys, /dev, cgroup2 inside the new rootfs
-7. pivot_root to the new rootfs, unmount the old root
-8. Drop capabilities, set seccomp filters for syscall filtering
-9. exec the container's entrypoint
+   ```zig
+   try sysMount("proc", "/proc", "proc", 0, 0);
+   try sysMountData("tmpfs", "/dev", "tmpfs", linux.MS.NOSUID | linux.MS.STRICTATIME, "mode=755,size=65536k");
+   _ = sysMount("sysfs", "/sys", "sysfs", linux.MS.RDONLY, 0) catch {};
+   _ = sysMount("cgroup2", "/sys/fs/cgroup", "cgroup2", linux.MS.RDONLY, 0) catch {};
+   ```
+   -> [`setupMounts()`](src/main.zig#L249), specifically [lines 303–333](src/main.zig#L303-L333). Device nodes (`/dev/null`, `/dev/zero`, etc.) are created with `mknodat()`.
+
+7. `pivot_root` to the new rootfs, unmount the old root
+   ```zig
+   linux.syscall2(.pivot_root, @intFromPtr(rootfs_z), @intFromPtr(pivot_z));
+   linux.syscall2(.umount2, @intFromPtr("/.pivot_old"), 2);  // MNT_DETACH
+   ```
+   -> [lines 278–302](src/main.zig#L278-L302). Bind-mount rootfs on itself first (pivot_root needs a mount point), then pivot, chdir to `/`, and unmount + remove the old root.
+
+8. Drop capabilities, set seccomp filters for syscall filtering - *not implemented yet (see TODO)*
+
+9. `exec` the container's entrypoint
+   ```zig
+   const exec_rc = linux.execve(cmd, argv, envp);
+   ```
+   -> [line 228](src/main.zig#L228). After this, the container process replaces the child completely.
 
 
 ## rootfs
