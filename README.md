@@ -1,5 +1,7 @@
 # Anatomy of a Naive Linux Container Runtime
 
+*The exercise has been concluded.*
+
 - [Anatomy of a Naive Linux Container Runtime](#anatomy-of-a-naive-linux-container-runtime)
   - [Introduction](#introduction)
   - [pivot\_root vs chroot](#pivot_root-vs-chroot)
@@ -8,8 +10,8 @@
     - [Download Alpine minirootfs](#download-alpine-minirootfs)
   - [Build \& Run](#build--run)
   - [TEST cgroups limits](#test-cgroups-limits)
-  - [TODO](#todo)
-    - [rootless (WIP)](#rootless-wip)
+  - [Not Implemented](#not-implemented)
+    - [rootless (not implemented)](#rootless-not-implemented)
   - [Why Zig?](#why-zig)
     - [Go's re-exec problem](#gos-re-exec-problem)
     - [crun](#crun)
@@ -102,7 +104,7 @@ The typical sequence a container runtime follows looks roughly like this:
    ```
    -> [lines 278–302](src/main.zig#L278-L302). Bind-mount rootfs on itself first (pivot_root needs a mount point), then pivot, chdir to `/`, and unmount + remove the old root.
 
-8. Drop capabilities, set seccomp filters for syscall filtering - *not implemented yet (see [TODO](#todo))*
+8. Drop capabilities, set seccomp filters for syscall filtering - *not implemented here*
 
 9. `exec` the container's entrypoint
    ```zig
@@ -211,14 +213,15 @@ $
 ```
 
 
-## TODO
+## Not Implemented 
 
 - [ ] overlay2
 - [ ] rootless
 - [ ] ...
 
 
-### rootless (WIP)
+
+### rootless (not implemented)
 
 Almost everything the container does requires root (CAP_SYS_ADMIN):
 
@@ -229,7 +232,7 @@ Almost everything the container does requires root (CAP_SYS_ADMIN):
 
 The escape hatch is CLONE_NEWUSER. This is how rootless Podman and rootless Docker work. A user namespace lets an unprivileged UID become UID 0 inside the container. Once it's "root" inside a user namespace, the kernel grants it capabilities for the other namespace operations (mount, pivot_root, etc.) -- but only within that namespace. It can't actually touch host resources.
 
-We need to add:
+We would add:
 
 1. Add CLONE_NEWUSER to the clone flags
 After clone, write uid/gid mappings from the parent:
@@ -241,7 +244,6 @@ After clone, write uid/gid mappings from the parent:
 
 The tricky part is synchronization -- the child has to wait until the parent has written the mappings before it calls mount() or pivot_root(). We'd typically use a pipe: child blocks on read(), parent writes the mappings then closes the pipe, child proceeds.
 
-To be continued ...
 
 
 ## Why Zig?
