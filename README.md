@@ -19,16 +19,16 @@
 
 ### how?
 
-Recent lab exercises @hogent triggered my curiosity.  I know containers run isolated, but differenty than by virtualizing hardware.  They share resources with the host and are more lightweight than virtual machines.  The filesystem of a container is layered with overlayfs, at least for Docker (OverlayFS / overlayfs2).  That's pretty much it.
+Recent lab exercises @hogent triggered my curiosity.  I know containers run isolated, but differenty than by virtualizing hardware.  They share resources with the host and are more lightweight than virtual machines.  The filesystem of a container is layered with overlayfs, at least for Docker (OverlayFS / overlayfs2).  That's pretty much it.  Pretty vague.
 
-I quickly understood that it's a matter of a handful of kernel features: cgroups, namespaces, unshare, pivot_chroot, ...
+After looking around a bit, I came to understand that it's a matter of a handful of kernel features: cgroups, namespaces, unshare, pivot_chroot, ...
 
 - cgroups ([linux control groups](https://man7.org/linux/man-pages/man7/cgroups.7.html)): handling resources and limits
 - namespaces ([linux namespaces](https://man7.org/linux/man-pages/man7/namespaces.7.html)) with CLONE flags: this manage the isolation
 - pivot_root ([change the root filesystem](https://man7.org/linux/man-pages/man8/pivot_root.8.html)): swap container's root filesystem
 - unshare ([run program in new namespaces](https://man7.org/linux/man-pages/man1/unshare.1.html))
 
-_a naive example_ (with only new pid and /proc remount, no separate rootfs)
+_the gist of it_ (with only new pid and /proc remount, no separate rootfs)
 
 ```bash
 $ nix-shell -p util-linux --run "sudo unshare --fork --pid --mount-proc bash"
