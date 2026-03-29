@@ -3,7 +3,6 @@
 - [Anatomy of a Naive Linux Container Runtime](#anatomy-of-a-naive-linux-container-runtime)
   - [Introduction](#introduction)
     - [how?](#how)
-    - [why zig?](#why-zig)
   - [pivot\_root vs chroot](#pivot_root-vs-chroot)
   - [container runtime sequence](#container-runtime-sequence)
   - [rootfs](#rootfs)
@@ -12,6 +11,10 @@
   - [TEST cgroups limits](#test-cgroups-limits)
   - [TODO](#todo)
     - [rootless (WIP)](#rootless-wip)
+  - [Why Zig?](#why-zig)
+    - [Go's re-exec problem](#gos-re-exec-problem)
+    - [crun](#crun)
+    - [Zig](#zig)
   - [Sources](#sources)
 
 
@@ -44,11 +47,6 @@ root           5  0.0  0.0  10496  3984 pts/10   R+   20:16   0:00 ps aux
 ```
 
 In the process, I also discovered Talos for Kubernetes.  That's for another time.
-
-### why zig?
-
-I discovered zig at v0.11.  Early stages, immature, but functional and very promising.  Fairly easy to get started.  Actually, I started a refresh-project of the cool xymon monitoring tool.  After a few months however, I abandoned it because of breaking changes, moving target.
-Now, we're at v0.15.2 and nearing the first production release.  So I wanted to give it another go.  I'm using claude.ai to give me a hand with picking it back up and even though it struggles with zig because of its small user base and available zig projects, it's better than a few years ago.
 
 
 ## pivot_root vs chroot
@@ -201,6 +199,53 @@ The tricky part is synchronization -- the child has to wait until the parent has
 
 To be continued ...
 
+
+## Why Zig?
+
+Most container runtimes are written in Go. Docker, containerd, runc, Podman's upper layers - all Go. This makes sense for the higher-level orchestration tooling, but for the low-level runtime that actually calls `clone()`, `setns()`, `pivot_root()`, and `execve()`, Go is an awkward fit. The reason comes down to one thing: **Go is multi-threaded from the start, and Linux namespaces require single-threaded control.**
+
+To understand why, you need to know that Linux namespaces are a **per-thread** property, not per-process. Each thread in a process can belong to a different set of namespaces. The syscalls that manipulate namespaces - `clone()`, `unshare()`, `setns()` - only affect the **calling thread**. The kernel does this deliberately: threads are the actual schedulable entities (tasks), and a "process" in Linux is really just a group of threads that happen to share resources.
+
+This design works perfectly when you have one thread: call `unshare(CLONE_NEWPID)` and your entire process is now in a new PID namespace. But when the Go runtime has already spawned 3-5 OS threads before your code even starts, that `unshare()` call only moves *one* of them. The rest stay in the old namespace. You now have a process that's half in the container and half out - an incoherent state that the kernel rightly rejects for certain operations (e.g., `CLONE_NEWUSER` from a multi-threaded process returns `EINVAL`).
+
+### Go's re-exec problem
+
+When a Go program starts, the runtime immediately spawns multiple OS threads for the garbage collector, the network poller, goroutine scheduling, etc. By the time `main()` runs, you already have several threads. This is a problem because:
+
+- `clone(CLONE_NEWPID)` only puts the calling thread into the new PID namespace. The other Go runtime threads remain in the old namespace.
+- `setns()` to join a mount or PID namespace only affects the calling thread. The other threads still see the old namespace.
+- `unshare(CLONE_NEWUSER)` from a multi-threaded process fails with `EINVAL` on many kernel versions.
+
+The kernel fundamentally expects namespace transitions to happen in a single-threaded context. Go violates this assumption by design.
+
+**runc's workaround: the nsexec hack.** runc solves this by embedding a C function (`nsexec()`) that runs via a cgo constructor - `__attribute__((constructor))` - which means it executes *before* the Go runtime boots and starts its threads. But to trigger this constructor, runc has to re-exec itself: the parent process fork/execs `/proc/self/exe` (itself), and the re-launched copy runs the C constructor in a single-threaded state, does the namespace setup, and only then lets Go take over. This is the "re-exec" pattern.
+
+The result is ~1200 lines of carefully-written C ([nsexec.c](https://github.com/opencontainers/runc/blob/main/libcontainer/nsenter/nsexec.c)) that bootstraps the namespace environment before Go can interfere, parent/child communication over pipes, and multiple fork stages just to work around the language runtime. As the runc developers themselves document: "nsexec must be run before the Go runtime in order to use the Linux kernel namespace."
+
+### crun
+
+[crun](https://github.com/containers/crun) is an OCI-compliant container runtime written entirely in C by Giuseppe Scrivano (Red Hat). It exists precisely because of Go's limitations in this space. From crun's own README:
+
+> "While most of the tools used in the Linux containers ecosystem are written in Go, I believe C is a better fit for a lower level tool like a container runtime. runc, the most used implementation of the OCI runtime specs written in Go, re-execs itself and uses a module written in C for setting up the environment before the container process starts."
+
+The results speak for themselves: crun is ~2x faster than runc for container startup and uses drastically less memory - it can run containers with as little as 512KB of memory, while runc fails under 4MB because the Go runtime itself needs that much just to exist.
+
+
+### Zig
+
+I discovered zig at v0.10.  Early stages, immature, but functional and very promising.  Fairly easy to get started.  I did Advent of Code 2021 as a learning zig project and had started a refresh-project of the cool xymon monitoring tool in zig, but abandoned it because of breaking changes, moving target.
+
+At the time of this writing, we're at v0.15.2 and nearing the first production release.  So I wanted to give it another go.  At the same time, I'm trying out claude.ai to give me a hand with picking it back up and even though it struggles with zig because of its small user base and available zig projects, it's better than a few years ago.  However, it's still pre-1.0 and the ecosystem is small. For a project whose entire purpose is to make syscalls in the right order, that hardly matters. We don't need a web framework or an ORM - we need `clone()` and `pivot_root()`, and Zig gives us those with less ceremony than any alternative.
+
+Zig sits in a sweet spot for this use case:
+
+- **No runtime threads.** When `main()` starts, there's one thread. Period. We can call `clone()` directly and know exactly what happens - the child gets a copy of our single-threaded address space. No re-exec trick needed.
+- **Direct syscall access.** `std.os.linux` exposes raw syscalls. We call `clone()`, `mount()`, `pivot_root()`, `execve()` directly - same as C, but with bounds-checked slices and a real type system.
+- **No hidden allocations.** After `clone()`, we avoid the allocator entirely and use only stack buffers and raw syscalls. In Go you can't avoid GC; in Zig you have full control.
+- **Single-file build.** `zig build` - no CMakeLists.txt, no configure scripts, no pkg-config. Cross-compilation to aarch64 is `zig build -Dtarget=aarch64-linux`.
+- **Readable.** The entire runtime is one ~500 line file. Someone reading it can follow the exact sequence of syscalls without navigating cgo constructors, re-exec pipes, or fork stages.
+
+
 ## Sources
 
 - [Talos - The Kubernetes Operating System](https://www.talos.dev/)
@@ -215,3 +260,8 @@ To be continued ...
 - [Build a Container from Scratch in Go (Modern Namespaces + cgroup v2)](https://dev.to/faizanfirdousi/build-a-container-from-scratch-in-go-modern-namespaces-cgroup-v2-5556)
 - [unshare](https://man7.org/linux/man-pages/man1/unshare.1.html)
 - [bubblewrap](https://github.com/containers/bubblewrap)
+- [runc nsenter - C bootstrapper that runs before Go's runtime](https://github.com/opencontainers/runc/blob/main/libcontainer/nsenter/README.md)
+- [runc nsexec.c - the 1200-line C workaround for Go's threading](https://github.com/opencontainers/runc/blob/main/libcontainer/nsenter/nsexec.c)
+- [crun - OCI runtime in C, created because Go is a poor fit](https://github.com/containers/crun)
+- [youki - OCI runtime in Rust](https://github.com/containers/youki)
+- [Namespaces in Go - reexec (Ed King)](https://medium.com/@teddyking/namespaces-in-go-reexec-3d1295b91af8)
