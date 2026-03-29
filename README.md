@@ -2,7 +2,6 @@
 
 - [Anatomy of a Naive Linux Container Runtime](#anatomy-of-a-naive-linux-container-runtime)
   - [Introduction](#introduction)
-    - [how?](#how)
   - [pivot\_root vs chroot](#pivot_root-vs-chroot)
   - [container runtime sequence](#container-runtime-sequence)
   - [rootfs](#rootfs)
@@ -19,8 +18,6 @@
 
 
 ## Introduction
-
-### how?
 
 Recent lab exercises @hogent triggered my curiosity.  I know that containers run isolated, but differently than by virtualizing hardware.  They share resources with the host and are more lightweight than virtual machines.  The filesystem of a container is layered with overlayfs, at least for Docker (OverlayFS / overlayfs2).  That's pretty much it.  Pretty vague.
 
@@ -75,7 +72,7 @@ The typical sequence a container runtime follows looks roughly like this:
 
 ### Download Alpine minirootfs
 
-We want a separate and new filesystem, isolated from the host filesystem.  For demonstration purposes, we also want a linux distribution with a package manager.  Alpine is known for its minimal size.
+We want a separate and new filesystem, isolated from the host filesystem.  For demonstration purposes, we also want a linux distribution with a package manager.  Alpine is known for its minimal size. `musl` vs `glibc`, but it'll do.
 
 ```bash
 curl -fSL -o alpine-minirootfs.tar.gz \
@@ -206,11 +203,11 @@ To be continued ...
 
 ## Why Zig?
 
-Most container runtimes are written in Go. Docker, containerd, runc, Podman's upper layers - all Go. This makes sense for the higher-level orchestration tooling, but for the low-level runtime that actually calls `clone()`, `setns()`, `pivot_root()`, and `execve()`, Go is an awkward fit. The reason comes down to one thing: **Go is multi-threaded from the start, and Linux namespaces require single-threaded control.**
+Most container runtimes are written in Go. Docker, containerd, runc, Podman's upper layers - all Go. This makes sense for the higher-level orchestration tooling, but for the low-level runtime that actually calls `clone()`, `setns()`, `pivot_root()`, and `execve()`, Go is an awkward fit. The reason comes down to one thing: Go is multi-threaded from the start, and Linux namespaces require single-threaded control.
 
-To understand why, you need to know that Linux namespaces are a **per-thread** property, not per-process. Each thread in a process can belong to a different set of namespaces. The syscalls that manipulate namespaces - `clone()`, `unshare()`, `setns()` - only affect the **calling thread**. The kernel does this deliberately: threads are the actual schedulable entities (tasks), and a "process" in Linux is really just a group of threads that happen to share resources.
+To understand why, you need to know that Linux namespaces are a per-thread property, not per-process. Each thread in a process can belong to a different set of namespaces. The syscalls that manipulate namespaces - `clone()`, `unshare()`, `setns()` - only affect the -calling thread-. The kernel does this deliberately: threads are the actual schedulable entities (tasks), and a "process" in Linux is really just a group of threads that happen to share resources.
 
-This design works perfectly when you have one thread: call `unshare(CLONE_NEWPID)` and your entire process is now in a new PID namespace. But when the Go runtime has already spawned 3-5 OS threads before your code even starts, that `unshare()` call only moves *one* of them. The rest stay in the old namespace. You now have a process that's half in the container and half out - an incoherent state that the kernel rightly rejects for certain operations (e.g., `CLONE_NEWUSER` from a multi-threaded process returns `EINVAL`).
+This design works perfectly when you have one thread: call `unshare(CLONE_NEWPID)` and your entire process is now in a new PID namespace. But when the Go runtime has already spawned 3-5 OS threads before your code even starts, that `unshare()` call only moves *one* of them. The rest stay in the old namespace. You now have a process that's half in the container and half out - an incoherent state that the kernel rightly rejects for certain operations (e.g., `CLONE_NEWUSER` from a multi-threaded process returns `EINVAL` - [invalid argument](https://man7.org/linux/man-pages/man3/errno.3.html)).
 
 ### Go's re-exec problem
 
