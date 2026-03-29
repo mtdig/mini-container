@@ -23,8 +23,8 @@ Recent lab exercises @hogent triggered my curiosity.  I know that containers run
 
 After looking around a bit, I came to understand that it's a matter of a handful of kernel features: cgroups, namespaces, unshare, pivot_root, ...
 
-- cgroups ([linux control groups](https://man7.org/linux/man-pages/man7/cgroups.7.html)): handling resources and limits
-- namespaces ([linux namespaces](https://man7.org/linux/man-pages/man7/namespaces.7.html)) with CLONE flags: this manage the isolation
+- cgroups ([linux control groups](https://man7.org/linux/man-pages/man7/cgroups.7.html)): handle resources and limits
+- namespaces ([linux namespaces](https://man7.org/linux/man-pages/man7/namespaces.7.html)) with CLONE flags: manage the isolation
 - pivot_root ([change the root filesystem](https://man7.org/linux/man-pages/man8/pivot_root.8.html)): swap container's root filesystem
 - unshare ([run program in new namespaces](https://man7.org/linux/man-pages/man1/unshare.1.html))
 
