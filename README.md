@@ -22,7 +22,7 @@
 
 ### how?
 
-Recent lab exercises @hogent triggered my curiosity.  I know containers run isolated, but differently than by virtualizing hardware.  They share resources with the host and are more lightweight than virtual machines.  The filesystem of a container is layered with overlayfs, at least for Docker (OverlayFS / overlayfs2).  That's pretty much it.  Pretty vague.
+Recent lab exercises @hogent triggered my curiosity.  I know that containers run isolated, but differently than by virtualizing hardware.  They share resources with the host and are more lightweight than virtual machines.  The filesystem of a container is layered with overlayfs, at least for Docker (OverlayFS / overlayfs2).  That's pretty much it.  Pretty vague.
 
 After looking around a bit, I came to understand that it's a matter of a handful of kernel features: cgroups, namespaces, unshare, pivot_root, ...
 
@@ -50,7 +50,7 @@ In the process, I also discovered Talos for Kubernetes.  That's for another time
 
 
 ## pivot_root vs chroot
-`chroot` only changes the process's path resolution root. The kernel just says "when this process resolves /, start from this directory instead." But the process's actual mount namespace is untouched -- the old root filesystem is still fully mounted and accessible. A privileged process can escape by using `fchdir` on a file descriptor opened before the chroot, or by creating a new mount namespace, or even by doing a second chroot with relative paths. It was never designed as a security boundary -- it was designed for system recovery and building packages.  And this is what we use when we install linux too.
+`chroot` only changes the process's path resolution root. The kernel just says "when this process resolves /, start from this directory instead." But the process's actual mount namespace is untouched -- the old root filesystem is still fully mounted and accessible. A privileged process can escape by using `fchdir` on a file descriptor opened before the chroot, or by creating a new mount namespace, or even by doing a second chroot with relative paths. It was never designed as a security boundary -- it was designed for system recovery and building packages.  This is what we use when we install linux.
 
 `pivot_root` actually changes which mount is at the root of the mount namespace. It swaps the current root mount with a new one and moves the old root to a specified mountpoint. After that, you can (and should) unmount the old root entirely. Once it's unmounted, there's nothing to escape back to -- the old filesystem is simply gone from the namespace. This is why container runtimes use it.
 
@@ -75,7 +75,7 @@ The typical sequence a container runtime follows looks roughly like this:
 
 ### Download Alpine minirootfs
 
-We want a separate and new filesystem, isolated from the host filesystem.  Alpine is known for its minimal size.
+We want a separate and new filesystem, isolated from the host filesystem.  For demonstration purposes, we also want a linux distribution with a package manager.  Alpine is known for its minimal size.
 
 ```bash
 curl -fSL -o alpine-minirootfs.tar.gz \
@@ -86,8 +86,12 @@ sudo tar -xzf alpine-minirootfs.tar.gz -C rootfs
 echo "nameserver 8.8.8.8" | sudo tee rootfs/etc/resolv.conf
 ```
 
-for x86_64
-My NixOS has binfmt_misc configured with QEMU user-mode emulation. When the kernel sees an x86_64 ELF binary, it transparently invokes qemu-x86_64 to translate the instructions at runtime.
+For x86_64 my NixOS (aarch64) has binfmt_misc configured with QEMU user-mode emulation. When the kernel sees an x86_64 ELF binary, it transparently invokes qemu-x86_64 to translate the instructions at runtime. 
+
+```bash
+$ grep emulatedSystems /etc/nixos -R
+/etc/nixos/configuration.nix:  boot.binfmt.emulatedSystems = [ "x86_64-linux" ];
+```
 
 ```bash
 curl -fSL -o alpine-minirootfs.tar.gz \
