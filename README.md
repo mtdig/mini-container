@@ -19,9 +19,9 @@
 
 ### how?
 
-Recent lab exercises @hogent triggered my curiosity.  I know containers run isolated, but differenty than by virtualizing hardware.  They share resources with the host and are more lightweight than virtual machines.  The filesystem of a container is layered with overlayfs, at least for Docker (OverlayFS / overlayfs2).  That's pretty much it.  Pretty vague.
+Recent lab exercises @hogent triggered my curiosity.  I know containers run isolated, but differently than by virtualizing hardware.  They share resources with the host and are more lightweight than virtual machines.  The filesystem of a container is layered with overlayfs, at least for Docker (OverlayFS / overlayfs2).  That's pretty much it.  Pretty vague.
 
-After looking around a bit, I came to understand that it's a matter of a handful of kernel features: cgroups, namespaces, unshare, pivot_chroot, ...
+After looking around a bit, I came to understand that it's a matter of a handful of kernel features: cgroups, namespaces, unshare, pivot_root, ...
 
 - cgroups ([linux control groups](https://man7.org/linux/man-pages/man7/cgroups.7.html)): handling resources and limits
 - namespaces ([linux namespaces](https://man7.org/linux/man-pages/man7/namespaces.7.html)) with CLONE flags: this manage the isolation
@@ -47,7 +47,7 @@ In the process, I also discovered Talos for Kubernetes.  That's for another time
 
 ### why zig?
 
-I discovered zig at v0.11.  Early stages, immature, but functional and very promising.  Fairly easy to get started.  Actually, I started a refresh-project of the cool xymon monitoring tool.  After a few months however, I abandonned it because of breaking changes, moving target.
+I discovered zig at v0.11.  Early stages, immature, but functional and very promising.  Fairly easy to get started.  Actually, I started a refresh-project of the cool xymon monitoring tool.  After a few months however, I abandoned it because of breaking changes, moving target.
 Now, we're at v0.15.2 and nearing the first production release.  So I wanted to give it another go.  I'm using claude.ai to give me a hand with picking it back up and even though it struggles with zig because of its small user base and available zig projects, it's better than a few years ago.
 
 
@@ -63,19 +63,21 @@ Now, we're at v0.15.2 and nearing the first production release.  So I wanted to 
 The typical sequence a container runtime follows looks roughly like this:
 
 1. Set up the overlayfs (stack the image layers, add writable upper layer)
-2. clone() with the desired CLONE_NEW* flags to create an isolated child process
-3. In the child: set up cgroup limits (or the parent does this before exec)
-4. Mount /proc, /sys, /dev inside the new rootfs
-5. pivot_root to the new rootfs, unmount the old root
-6. Drop capabilities, set seccomp filters for syscall filtering
-7. exec the container's entrypoint
+2. Create a cgroup and set resource limits (memory, CPU, ...)
+3. Move the parent into the sub-cgroup so CLONE_NEWCGROUP roots correctly
+4. clone() with CLONE_NEWPID | CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWCGROUP | ...
+5. Parent moves itself back to root cgroup (only child stays constrained)
+6. In the child: mount /proc, /sys, /dev, cgroup2 inside the new rootfs
+7. pivot_root to the new rootfs, unmount the old root
+8. Drop capabilities, set seccomp filters for syscall filtering
+9. exec the container's entrypoint
 
 
 ## rootfs
 
 ### Download Alpine minirootfs
 
-We want a separate and new filesystem, isolated from the host filesystem.  Alpine is know for its minimal size.
+We want a separate and new filesystem, isolated from the host filesystem.  Alpine is known for its minimal size.
 
 ```bash
 curl -fSL -o alpine-minirootfs.tar.gz \
