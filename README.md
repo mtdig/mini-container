@@ -102,7 +102,7 @@ The typical sequence a container runtime follows looks roughly like this:
    ```
    -> [lines 278–302](src/main.zig#L278-L302). Bind-mount rootfs on itself first (pivot_root needs a mount point), then pivot, chdir to `/`, and unmount + remove the old root.
 
-8. Drop capabilities, set seccomp filters for syscall filtering - *not implemented yet (see TODO)*
+8. Drop capabilities, set seccomp filters for syscall filtering - *not implemented yet (see [TODO](#todo))*
 
 9. `exec` the container's entrypoint
    ```zig
